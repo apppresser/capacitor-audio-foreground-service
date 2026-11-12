@@ -8,6 +8,7 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ServiceInfo;
+import android.media.MediaPlayer;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -15,7 +16,9 @@ import android.os.PowerManager;
 import android.service.notification.StatusBarNotification;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
@@ -175,6 +178,18 @@ public class AudioForegroundService extends Service {
         }
         completeStart(true, null);
         return START_NOT_STICKY;
+    }
+
+    /**
+     * Swiping the app away removes the task but leaves this service running
+     * because {@code stopWithTask} is false. Stop the players, then the service,
+     * or audio keeps going after the app is gone.
+     */
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        stopNativePlayback();
+        shutdown();
+        super.onTaskRemoved(rootIntent);
     }
 
     @Override
@@ -353,6 +368,105 @@ public class AudioForegroundService extends Service {
             wakeLock.release();
         }
         wakeLock = null;
+    }
+
+    /**
+     * Native audio's own stop() needs a live activity, which is already gone
+     * when the task is removed. Release the players directly instead.
+     */
+    private void stopNativePlayback() {
+        try {
+            Class<?> nativeAudio = Class.forName("ee.forgr.audio.NativeAudio");
+            Field assetsField = nativeAudio.getDeclaredField("audioAssetList");
+            assetsField.setAccessible(true);
+            Object assets = assetsField.get(null);
+            if (!(assets instanceof Map)) {
+                return;
+            }
+            for (Object asset : ((Map<?, ?>) assets).values()) {
+                stopAsset(asset);
+            }
+        } catch (Exception error) {
+            Log.w(TAG, "Unable to stop native audio after the app was removed", error);
+        }
+    }
+
+    private void stopAsset(Object asset) {
+        if (asset == null) {
+            return;
+        }
+        for (Class<?> type = asset.getClass(); type != null && type != Object.class; type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                field.setAccessible(true);
+                try {
+                    stopPlaybackValue(field.get(asset), 0);
+                } catch (Exception error) {
+                    Log.w(TAG, "Failed to read audio field " + field.getName(), error);
+                }
+            }
+        }
+    }
+
+    private void stopPlaybackValue(Object value, int depth) {
+        if (value == null || depth > 2) {
+            return;
+        }
+        if (value instanceof MediaPlayer) {
+            MediaPlayer player = (MediaPlayer) value;
+            try {
+                if (player.isPlaying()) {
+                    player.pause();
+                }
+                player.release();
+            } catch (Exception error) {
+                Log.w(TAG, "Failed to stop MediaPlayer", error);
+            }
+            return;
+        }
+        if (releaseExoPlayer(value)) {
+            return;
+        }
+        if (value instanceof Map) {
+            for (Object item : ((Map<?, ?>) value).values()) {
+                stopPlaybackValue(item, depth + 1);
+            }
+            return;
+        }
+        if (value instanceof Iterable) {
+            for (Object item : (Iterable<?>) value) {
+                stopPlaybackValue(item, depth + 1);
+            }
+            return;
+        }
+        if (depth >= 1 || !value.getClass().getName().startsWith("ee.forgr.audio.")) {
+            return;
+        }
+        for (Field field : value.getClass().getDeclaredFields()) {
+            field.setAccessible(true);
+            try {
+                stopPlaybackValue(field.get(value), depth + 1);
+            } catch (Exception error) {
+                Log.w(TAG, "Failed to read nested audio field " + field.getName(), error);
+            }
+        }
+    }
+
+    private boolean releaseExoPlayer(Object value) {
+        try {
+            Class<?> playerClass = Class.forName("androidx.media3.common.Player");
+            if (!playerClass.isInstance(value)) {
+                return false;
+            }
+            value.getClass().getMethod("pause").invoke(value);
+            value.getClass().getMethod("stop").invoke(value);
+            value.getClass().getMethod("release").invoke(value);
+            return true;
+        } catch (ClassNotFoundException error) {
+            return false;
+        } catch (Exception error) {
+            Log.w(TAG, "Failed to stop ExoPlayer", error);
+            return true;
+        }
     }
 
     private void shutdown() {
