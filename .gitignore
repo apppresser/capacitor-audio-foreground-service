@@ -1,0 +1,36 @@
+dist
+node_modules
+
+# iOS
+Pods
+Podfile.lock
+Package.resolved
+Build
+xcuserdata
+/.build
+/Packages
+DerivedData/
+.swiftpm
+.netrc
+
+# macOS
+.DS_Store
+
+# Android
+*.apk
+*.ap_
+*.dex
+*.class
+bin
+gen
+out
+.gradle
+build
+local.properties
+proguard
+*.log
+.navigation
+captures
+*.iml
+.idea
+.externalNativeBuild

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="audio_foreground_channel_name">Audio playback</string>
+    <string name="audio_foreground_channel_description">Keeps audio playing while the app is in the background</string>
+    <string name="audio_foreground_notification_title">Playing audio</string>
+</resources>
